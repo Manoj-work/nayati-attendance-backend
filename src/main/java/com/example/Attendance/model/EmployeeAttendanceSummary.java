@@ -18,14 +18,12 @@ public class EmployeeAttendanceSummary {
     private String id; // e.g. "summary_emp002"
     private String employeeId;
 
-    // Renamed from attendanceMap → years
     private Map<String, YearAttendance> years; // key: year (e.g. "2025")
 
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
     public static class YearAttendance {
-        // Removed yearMeta
         private Map<String, MonthAttendance> months; // key: month (e.g. "4" for April)
     }
 
@@ -33,14 +31,6 @@ public class EmployeeAttendanceSummary {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class MonthAttendance {
-        // Flattened monthMeta → direct fields
-        private int totalDays;
-        private int presentDays;
-        private int approvedLeaveDays;
-        private int approvedLopDays;
-        private int unapprovedAbsenceDays;
-
-        // Renamed dayMap → days
         private Map<String, DayAttendanceMeta> days; // key: date (e.g. "10")
     }
 
@@ -48,6 +38,6 @@ public class EmployeeAttendanceSummary {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DayAttendanceMeta {
-        private String status; // Present, Absent, Leave, LOP, etc.
+        private String status; // Present, Absent, Leave, LOP, Weekly Off
     }
 }

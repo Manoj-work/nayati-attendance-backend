@@ -12,9 +12,9 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CheckInOut {
-    private LocalDateTime checkIn;
-    private LocalDateTime checkOut;
-    private String checkInImgUrl;
+    private String type; // "checkin" or "checkout"
+    private LocalDateTime timestamp;
+    private String checkinImgUrl; // Only used for checkin type
 
     // Getters & Setters
 }

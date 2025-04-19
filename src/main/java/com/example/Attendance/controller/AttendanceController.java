@@ -2,7 +2,6 @@ package com.example.Attendance.controller;
 
 import com.example.Attendance.dto.BulkAttendanceRequest;
 import com.example.Attendance.model.DailyAttendance;
-import com.example.Attendance.model.EmployeeAttendanceSummary;
 import com.example.Attendance.service.AttendanceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -53,18 +52,6 @@ public class AttendanceController {
     }
 
 
-    /*
-        {
-            "employeeId": "emp002",
-            "status": "Leave",
-            "dates": [
-            "2025-04-05",
-            "2025-04-06",
-            "2025-04-07"
-            ]
-        }
-
-     */
 
     @PostMapping("/mark-bulk")
     public ResponseEntity<String> markBulkAttendance(@RequestBody BulkAttendanceRequest request) {

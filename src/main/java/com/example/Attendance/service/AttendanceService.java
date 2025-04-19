@@ -39,6 +39,25 @@ public class AttendanceService {
         User user = userRepository.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
 
+        // Use current time if not provided
+        if (checkinTime == null) {
+            checkinTime = LocalDateTime.now();
+        }
+
+        // Check if user has already checked in and not checked out
+        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
+        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, today);
+        
+        if (existingAttendance.isPresent()) {
+            List<CheckInOut> logs = existingAttendance.get().getLogs();
+            if (!logs.isEmpty()) {
+                CheckInOut lastLog = logs.get(logs.size() - 1);
+                if (lastLog.getType().equals("checkin")) {
+                    throw new CustomException("Please check out before checking in again", HttpStatus.BAD_REQUEST);
+                }
+            }
+        }
+
         String storedImageUrl = user.getPhotoUrl();
         String name = user.getName();
 
@@ -58,11 +77,6 @@ public class AttendanceService {
         // 5. Upload check-in image
         String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
 
-        // 6. Use current time if not provided
-        if (checkinTime == null) {
-            checkinTime = LocalDateTime.now();
-        }
-
         // 7. Record daily attendance
         recordDailyAttendance(employeeId, name, checkinImgUrl, checkinTime);
 
@@ -71,23 +85,18 @@ public class AttendanceService {
 
 
     public String checkOut(String employeeId) {
-        LocalDate today = LocalDate.now();
         LocalDateTime now = LocalDateTime.now();
+        LocalDateTime today = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
 
         DailyAttendance daily = dailyRepo.findByEmployeeIdAndDate(employeeId, today)
-                .orElseThrow(() -> new CustomException("No check-in found for today",HttpStatus.NOT_FOUND));
+                .orElseThrow(() -> new CustomException("No check-in found for today", HttpStatus.NOT_FOUND));
 
-        List<CheckInOut> times = daily.getCheckInOutTimes();
-        CheckInOut last = times.get(times.size() - 1);
-        if (last.getCheckOut() != null) throw new CustomException("Already checked out",HttpStatus.BAD_REQUEST);
+        List<CheckInOut> logs = daily.getLogs();
+        if (logs.isEmpty() || !logs.get(logs.size() - 1).getType().equals("checkin")) {
+            throw new CustomException("No check-in found for today", HttpStatus.BAD_REQUEST);
+        }
 
-        last.setCheckOut(now);
-
-        // Update working hours
-        Duration duration = Duration.between(last.getCheckIn(), now);
-        double hours = duration.toMinutes() / 60.0;
-        daily.setTotalWorkingHours(daily.getTotalWorkingHours() + hours);
-
+        logs.add(new CheckInOut("checkout", now, null));
         dailyRepo.save(daily);
         return "Check-out recorded!";
     }
@@ -105,21 +114,18 @@ public class AttendanceService {
         EmployeeAttendanceSummary.YearAttendance yearData = years.computeIfAbsent(year, y -> new EmployeeAttendanceSummary.YearAttendance(new HashMap<>()));
 
         Map<String, EmployeeAttendanceSummary.MonthAttendance> months = yearData.getMonths();
-        EmployeeAttendanceSummary.MonthAttendance monthData = months.computeIfAbsent(month, m -> new EmployeeAttendanceSummary.MonthAttendance(0, 0, 0, 0, 0, new HashMap<>()));
+        EmployeeAttendanceSummary.MonthAttendance monthData = months.computeIfAbsent(month, m -> new EmployeeAttendanceSummary.MonthAttendance(new HashMap<>()));
 
         Map<String, EmployeeAttendanceSummary.DayAttendanceMeta> days = monthData.getDays();
         days.put(day, new EmployeeAttendanceSummary.DayAttendanceMeta("Present"));
-
-        // Update month counters (optional logic – you can refine as needed)
-        monthData.setTotalDays(monthData.getTotalDays() + 1);
-        monthData.setPresentDays(monthData.getPresentDays() + 1);
 
         summaryRepo.save(summary);
     }
 
 
     public DailyAttendance getDailyData(String employeeId, LocalDate date) {
-        return dailyRepo.findByEmployeeIdAndDate(employeeId, date)
+        LocalDateTime dateTime = date.atStartOfDay();
+        return dailyRepo.findByEmployeeIdAndDate(employeeId, dateTime)
                 .orElseThrow(() -> new CustomException("No attendance found for this date", HttpStatus.NOT_FOUND));
     }
 
@@ -133,10 +139,38 @@ public class AttendanceService {
         EmployeeAttendanceSummary.MonthAttendance monthData = yearData.getMonths()
                 .getOrDefault(month, new EmployeeAttendanceSummary.MonthAttendance());
 
-        return Map.of("summary", monthData);
+        Map<String, EmployeeAttendanceSummary.DayAttendanceMeta> days = monthData.getDays();
+        
+        // Calculate summary from daily records
+        int presentDays = 0;
+        int approvedLeaveDays = 0;
+        int approvedLopDays = 0;
+        int unapprovedAbsenceDays = 0;
+        int weeklyOffDays = 0;
+
+        for (EmployeeAttendanceSummary.DayAttendanceMeta dayMeta : days.values()) {
+            String status = dayMeta.getStatus();
+            switch (status) {
+                case "Present" -> presentDays++;
+                case "Leave" -> approvedLeaveDays++;
+                case "LOP" -> approvedLopDays++;
+                case "Absent" -> unapprovedAbsenceDays++;
+                case "Weekly Off" -> weeklyOffDays++;
+            }
+        }
+
+        Map<String, Object> summaryMap = new LinkedHashMap<>();
+
+        summaryMap.put("presentDays", presentDays);
+        summaryMap.put("approvedLeaveDays", approvedLeaveDays);
+        summaryMap.put("approvedLopDays", approvedLopDays);
+        summaryMap.put("unapprovedAbsenceDays", unapprovedAbsenceDays);
+        summaryMap.put("weeklyOffDays", weeklyOffDays);
+        summaryMap.put("days", days);
+
+        return Map.of("summary", summaryMap);
     }
 
-    // mark status as provided
     public void markBulkAttendance(String employeeId, String status, List<String> dateStrings) {
         EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElse(new EmployeeAttendanceSummary("summary_" + employeeId, employeeId, new HashMap<>()));
@@ -151,19 +185,10 @@ public class AttendanceService {
             EmployeeAttendanceSummary.YearAttendance yearData = years.computeIfAbsent(year, y -> new EmployeeAttendanceSummary.YearAttendance(new HashMap<>()));
 
             Map<String, EmployeeAttendanceSummary.MonthAttendance> months = yearData.getMonths();
-            EmployeeAttendanceSummary.MonthAttendance monthData = months.computeIfAbsent(month, m -> new EmployeeAttendanceSummary.MonthAttendance(0, 0, 0, 0, 0, new HashMap<>()));
+            EmployeeAttendanceSummary.MonthAttendance monthData = months.computeIfAbsent(month, m -> new EmployeeAttendanceSummary.MonthAttendance(new HashMap<>()));
 
             Map<String, EmployeeAttendanceSummary.DayAttendanceMeta> days = monthData.getDays();
             days.put(day, new EmployeeAttendanceSummary.DayAttendanceMeta(status));
-
-            // Update month counters
-            monthData.setTotalDays(monthData.getTotalDays() + 1);
-            switch (status) {
-                case "Present" -> monthData.setPresentDays(monthData.getPresentDays() + 1);
-                case "Leave" -> monthData.setApprovedLeaveDays(monthData.getApprovedLeaveDays() + 1);
-                case "LOP" -> monthData.setApprovedLopDays(monthData.getApprovedLopDays() + 1);
-                case "Absent" -> monthData.setUnapprovedAbsenceDays(monthData.getUnapprovedAbsenceDays() + 1);
-            }
         }
 
         summaryRepo.save(summary);
@@ -177,7 +202,7 @@ public class AttendanceService {
 
         LocalDate joiningDate = user.getJoiningDate();
         LocalDate today = LocalDate.now();
-        List<String> weeklyOffs = user.getWeeklyOffs(); // e.g. ["SUNDAY", "SATURDAY"]
+        List<String> weeklyOffs = user.getWeeklyOffs();
 
         boolean hasPreviousAttendance = dailyRepo.existsByEmployeeId(employeeId);
         if (hasPreviousAttendance) return;
@@ -186,7 +211,7 @@ public class AttendanceService {
                 .orElse(new EmployeeAttendanceSummary("summary_" + employeeId, employeeId, new HashMap<>()));
 
         for (LocalDate date = joiningDate; date.isBefore(today); date = date.plusDays(1)) {
-            String dayName = date.getDayOfWeek().toString(); // e.g. "MONDAY"
+            String dayName = date.getDayOfWeek().toString();
             String year = String.valueOf(date.getYear());
             String month = String.valueOf(date.getMonthValue());
             String day = String.valueOf(date.getDayOfMonth());
@@ -195,17 +220,14 @@ public class AttendanceService {
             EmployeeAttendanceSummary.YearAttendance yearData = years.computeIfAbsent(year, y -> new EmployeeAttendanceSummary.YearAttendance(new HashMap<>()));
 
             Map<String, EmployeeAttendanceSummary.MonthAttendance> months = yearData.getMonths();
-            EmployeeAttendanceSummary.MonthAttendance monthData = months.computeIfAbsent(month, m -> new EmployeeAttendanceSummary.MonthAttendance(0, 0, 0, 0, 0, new HashMap<>()));
+            EmployeeAttendanceSummary.MonthAttendance monthData = months.computeIfAbsent(month, m -> new EmployeeAttendanceSummary.MonthAttendance(new HashMap<>()));
 
             Map<String, EmployeeAttendanceSummary.DayAttendanceMeta> days = monthData.getDays();
 
             if (weeklyOffs.contains(dayName)) {
                 days.put(day, new EmployeeAttendanceSummary.DayAttendanceMeta("Weekly Off"));
-                // No change in absence count or working day count
             } else {
                 days.put(day, new EmployeeAttendanceSummary.DayAttendanceMeta("Absent"));
-                monthData.setTotalDays(monthData.getTotalDays() + 1);
-                monthData.setUnapprovedAbsenceDays(monthData.getUnapprovedAbsenceDays() + 1);
             }
         }
 
@@ -219,7 +241,7 @@ public class AttendanceService {
         User user = userRepository.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
 
-        List<String> weeklyOffs = user.getWeeklyOffs(); // e.g. ["SUNDAY", "SATURDAY"]
+        List<String> weeklyOffs = user.getWeeklyOffs();
         EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElse(new EmployeeAttendanceSummary("summary_" + employeeId, employeeId, new HashMap<>()));
 
@@ -233,13 +255,13 @@ public class AttendanceService {
                 summary.getYears().computeIfAbsent(yearStr, y -> new EmployeeAttendanceSummary.YearAttendance(new HashMap<>()));
 
         EmployeeAttendanceSummary.MonthAttendance monthAttendance =
-                yearAttendance.getMonths().computeIfAbsent(monthStr, m -> new EmployeeAttendanceSummary.MonthAttendance(0, 0, 0, 0, 0, new HashMap<>()));
+                yearAttendance.getMonths().computeIfAbsent(monthStr, m -> new EmployeeAttendanceSummary.MonthAttendance(new HashMap<>()));
 
         Map<String, EmployeeAttendanceSummary.DayAttendanceMeta> daysMap = monthAttendance.getDays();
 
         for (int day = 1; day <= daysInMonth; day++) {
             LocalDate date = LocalDate.of(year, month, day);
-            String dayOfWeek = date.getDayOfWeek().toString(); // e.g. "SUNDAY"
+            String dayOfWeek = date.getDayOfWeek().toString();
 
             if (weeklyOffs.contains(dayOfWeek)) {
                 String dayKey = String.valueOf(day);
@@ -293,18 +315,18 @@ public class AttendanceService {
     }
 
     private void recordDailyAttendance(String employeeId, String name, String checkinImgUrl, LocalDateTime checkinTime) {
-        LocalDate today = checkinTime.toLocalDate();
+        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
 
         // ✅ Mark backdated absents on first-time check-in
         markPastDaysAbsentIfFirstCheckin(employeeId);
 
         DailyAttendance daily = dailyRepo.findByEmployeeIdAndDate(employeeId, today)
-                .orElse(new DailyAttendance(null, employeeId, today, new ArrayList<>(), 0));
+                .orElse(new DailyAttendance(null, employeeId, today, new ArrayList<>()));
 
-        daily.getCheckInOutTimes().add(new CheckInOut(checkinTime, null, checkinImgUrl));
+        daily.getLogs().add(new CheckInOut("checkin", checkinTime, checkinImgUrl));
         dailyRepo.save(daily);
 
-        updateSummaryOnCheckIn(employeeId, today);
+        updateSummaryOnCheckIn(employeeId, today.toLocalDate());
     }
 
 }
