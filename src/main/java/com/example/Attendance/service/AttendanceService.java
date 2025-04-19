@@ -25,6 +25,9 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.*;
 
+import com.example.Attendance.service.EmployeeDetailsService;
+import com.example.Attendance.dto.EmployeeDetailsDTO;
+
 @Service
 @RequiredArgsConstructor
 public class AttendanceService {
@@ -32,35 +35,15 @@ public class AttendanceService {
     private final DailyAttendanceRepository dailyRepo;
     private final EmployeeAttendanceSummaryRepository summaryRepo;
     private final UserRepository userRepository;
+    private final EmployeeDetailsService employeeDetailsService;
     private final FaceVerificationService faceVerificationService;
     private final MinIOService minIOService;
 
     public String handleFaceCheckin(String employeeId, MultipartFile file, LocalDateTime checkinTime) throws IOException {
-        // 1. Find user
-        User user = userRepository.findByEmployeeId(employeeId)
-                .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
-
-        // Use current time if not provided
-        if (checkinTime == null) {
-            checkinTime = LocalDateTime.now();
-        }
-
-        // Check if user has already checked in and not checked out
-        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
-        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, today);
-        
-        if (existingAttendance.isPresent()) {
-            List<CheckInOut> logs = existingAttendance.get().getLogs();
-            if (!logs.isEmpty()) {
-                CheckInOut lastLog = logs.get(logs.size() - 1);
-                if (lastLog.getType().equals("checkin")) {
-                    throw new CustomException("Please check out before checking in again", HttpStatus.BAD_REQUEST);
-                }
-            }
-        }
-
-        String storedImageUrl = user.getPhotoUrl();
-        String name = user.getName();
+        // 1. Get employee details from external service
+        EmployeeDetailsDTO employeeDetails = employeeDetailsService.getEmployeeDetails(employeeId);
+        String storedImageUrl = employeeDetails.getEmployeeImgUrl();
+        String name = employeeDetails.getName();
 
         // 2. Reuse file bytes for MinIO & Python
         byte[] fileBytes = file.getBytes();
@@ -77,6 +60,11 @@ public class AttendanceService {
 
         // 5. Upload check-in image
         String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
+
+        // 6. Use current time if not provided
+        if (checkinTime == null) {
+            checkinTime = LocalDateTime.now();
+        }
 
         // 7. Record daily attendance
         recordDailyAttendance(employeeId, name, checkinImgUrl, checkinTime);
@@ -234,12 +222,10 @@ public class AttendanceService {
 
     // mark previous days as absent
     public void markPastDaysAbsentIfFirstCheckin(String employeeId) {
-        User user = userRepository.findByEmployeeId(employeeId)
-                .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
-
-        LocalDate joiningDate = user.getJoiningDate();
-        LocalDate today = LocalDate.now();
-        List<String> weeklyOffs = user.getWeeklyOffs();
+        // Get employee details from external service
+        EmployeeDetailsDTO employeeDetails = employeeDetailsService.getEmployeeDetails(employeeId);
+        LocalDate joiningDate = employeeDetails.getJoiningDate();
+        List<String> weeklyOffs = employeeDetails.getWeeklyOffs();
 
         boolean hasPreviousAttendance = dailyRepo.existsByEmployeeId(employeeId);
         if (hasPreviousAttendance) return;
@@ -247,6 +233,7 @@ public class AttendanceService {
         EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElse(new EmployeeAttendanceSummary("summary_" + employeeId, employeeId, new HashMap<>()));
 
+        LocalDate today = LocalDate.now();
         for (LocalDate date = joiningDate; date.isBefore(today); date = date.plusDays(1)) {
             String dayName = date.getDayOfWeek().toString();
             String year = String.valueOf(date.getYear());
@@ -275,10 +262,10 @@ public class AttendanceService {
 
     // Mark weekends for the user for a month
     public void markWeekendsForEmployee(String employeeId, int year, int month) {
-        User user = userRepository.findByEmployeeId(employeeId)
-                .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
+        // Get employee details from external service
+        EmployeeDetailsDTO employeeDetails = employeeDetailsService.getEmployeeDetails(employeeId);
+        List<String> weeklyOffs = employeeDetails.getWeeklyOffs();
 
-        List<String> weeklyOffs = user.getWeeklyOffs();
         EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElse(new EmployeeAttendanceSummary("summary_" + employeeId, employeeId, new HashMap<>()));
 
