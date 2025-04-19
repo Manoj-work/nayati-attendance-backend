@@ -1,6 +1,7 @@
 package com.example.Attendance.service;
 
 
+import com.example.Attendance.dto.DayAttendanceResponse;
 import com.example.Attendance.exception.CustomException;
 import com.example.Attendance.model.CheckInOut;
 import com.example.Attendance.model.DailyAttendance;
@@ -123,10 +124,39 @@ public class AttendanceService {
     }
 
 
-    public DailyAttendance getDailyData(String employeeId, LocalDate date) {
+    public DayAttendanceResponse getDailyData(String employeeId, LocalDate date) {
         LocalDateTime dateTime = date.atStartOfDay();
-        return dailyRepo.findByEmployeeIdAndDate(employeeId, dateTime)
+        DayAttendanceResponse response = new DayAttendanceResponse();
+        
+        // First check daily attendance
+        Optional<DailyAttendance> dailyAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, dateTime);
+        if (dailyAttendance.isPresent()) {
+            response.setDailyAttendance(dailyAttendance.get());
+            return response;
+        }
+
+        // If no daily attendance, check summary
+        EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new CustomException("No attendance found for this date", HttpStatus.NOT_FOUND));
+
+        String year = String.valueOf(date.getYear());
+        String month = String.valueOf(date.getMonthValue());
+        String day = String.valueOf(date.getDayOfMonth());
+
+        // Get the day's attendance from summary
+        EmployeeAttendanceSummary.DayAttendanceMeta dayMeta = summary.getYears()
+                .getOrDefault(year, new EmployeeAttendanceSummary.YearAttendance())
+                .getMonths()
+                .getOrDefault(month, new EmployeeAttendanceSummary.MonthAttendance())
+                .getDays()
+                .get(day);
+
+        if (dayMeta == null) {
+            throw new CustomException("No data found for this day", HttpStatus.NOT_FOUND);
+        }
+
+        response.setSummaryAttendance(dayMeta);
+        return response;
     }
 
     public Map<String, Object> getMonthlySummary(String employeeId, String year, String month) {
@@ -171,7 +201,7 @@ public class AttendanceService {
         return Map.of("summary", summaryMap);
     }
 
-    public void markBulkAttendance(String employeeId, String status, List<String> dateStrings) {
+    public void markBulkAttendance(String employeeId, String status, String leaveId, List<String> dateStrings) {
         EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElse(new EmployeeAttendanceSummary("summary_" + employeeId, employeeId, new HashMap<>()));
 
@@ -188,7 +218,14 @@ public class AttendanceService {
             EmployeeAttendanceSummary.MonthAttendance monthData = months.computeIfAbsent(month, m -> new EmployeeAttendanceSummary.MonthAttendance(new HashMap<>()));
 
             Map<String, EmployeeAttendanceSummary.DayAttendanceMeta> days = monthData.getDays();
-            days.put(day, new EmployeeAttendanceSummary.DayAttendanceMeta(status));
+            EmployeeAttendanceSummary.DayAttendanceMeta dayMeta = new EmployeeAttendanceSummary.DayAttendanceMeta(status, null);
+            
+            // Set leaveId if provided, regardless of status
+            if (leaveId != null && !leaveId.isEmpty()) {
+                dayMeta.setLeaveId(leaveId);
+            }
+            
+            days.put(day, dayMeta);
         }
 
         summaryRepo.save(summary);

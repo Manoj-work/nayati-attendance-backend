@@ -7,5 +7,6 @@ import java.util.List;
 public class BulkAttendanceRequest {
     private String employeeId;
     private String status; // Leave, LOP, Absent
+    private String leaveId; // ID of the leave if status is "Leave"
     private List<String> dates; // yyyy-MM-dd
 }

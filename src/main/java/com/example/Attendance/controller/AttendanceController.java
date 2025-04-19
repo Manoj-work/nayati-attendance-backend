@@ -1,6 +1,7 @@
 package com.example.Attendance.controller;
 
 import com.example.Attendance.dto.BulkAttendanceRequest;
+import com.example.Attendance.dto.DayAttendanceResponse;
 import com.example.Attendance.model.DailyAttendance;
 import com.example.Attendance.service.AttendanceService;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +38,7 @@ public class AttendanceController {
     }
 
     @GetMapping("/daily/{employeeId}/{date}")
-    public ResponseEntity<DailyAttendance> getDailyData(
+    public ResponseEntity<DayAttendanceResponse> getDailyData(
             @PathVariable String employeeId,
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return ResponseEntity.ok(attendanceService.getDailyData(employeeId, date));
@@ -51,11 +52,9 @@ public class AttendanceController {
         return ResponseEntity.ok(attendanceService.getMonthlySummary(employeeId, year, month));
     }
 
-
-
     @PostMapping("/mark-bulk")
     public ResponseEntity<String> markBulkAttendance(@RequestBody BulkAttendanceRequest request) {
-        attendanceService.markBulkAttendance(request.getEmployeeId(), request.getStatus(), request.getDates());
+        attendanceService.markBulkAttendance(request.getEmployeeId(), request.getStatus(), request.getLeaveId(), request.getDates());
         return ResponseEntity.ok("Attendance updated for selected dates.");
     }
 

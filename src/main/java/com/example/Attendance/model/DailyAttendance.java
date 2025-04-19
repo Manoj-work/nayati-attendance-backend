@@ -1,5 +1,7 @@
 package com.example.Attendance.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -14,9 +16,11 @@ import java.util.List;
 @Setter
 @AllArgsConstructor
 @NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
 @Document("daily_attendance")
 public class DailyAttendance {
     @Id
+    @JsonIgnore
     private String id;
     private String employeeId;
     private LocalDateTime date;
