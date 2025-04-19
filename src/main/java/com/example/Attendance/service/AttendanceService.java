@@ -24,6 +24,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import com.example.Attendance.service.EmployeeDetailsService;
 import com.example.Attendance.dto.EmployeeDetailsDTO;
@@ -45,6 +46,26 @@ public class AttendanceService {
         String storedImageUrl = employeeDetails.getEmployeeImgUrl();
         String name = employeeDetails.getName();
 
+        // 6. Use current time if not provided
+        if (checkinTime == null) {
+            checkinTime = LocalDateTime.now();
+        }
+
+
+        // Check if user has already checked in and not checked out
+        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
+        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, today);
+
+        if (existingAttendance.isPresent()) {
+            List<CheckInOut> logs = existingAttendance.get().getLogs();
+            if (!logs.isEmpty()) {
+                CheckInOut lastLog = logs.get(logs.size() - 1);
+                if (lastLog.getType().equals("checkin")) {
+                    throw new CustomException("Please check out before checking in again", HttpStatus.BAD_REQUEST);
+                }
+            }
+        }
+
         // 2. Reuse file bytes for MinIO & Python
         byte[] fileBytes = file.getBytes();
 
@@ -61,10 +82,6 @@ public class AttendanceService {
         // 5. Upload check-in image
         String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
 
-        // 6. Use current time if not provided
-        if (checkinTime == null) {
-            checkinTime = LocalDateTime.now();
-        }
 
         // 7. Record daily attendance
         recordDailyAttendance(employeeId, name, checkinImgUrl, checkinTime);
@@ -225,7 +242,11 @@ public class AttendanceService {
         // Get employee details from external service
         EmployeeDetailsDTO employeeDetails = employeeDetailsService.getEmployeeDetails(employeeId);
         LocalDate joiningDate = employeeDetails.getJoiningDate();
-        List<String> weeklyOffs = employeeDetails.getWeeklyOffs();
+        List<String> weeklyOffs = employeeDetails.getWeeklyOffs()
+                .stream()
+                .map(String::toUpperCase)
+                .toList();
+
 
         boolean hasPreviousAttendance = dailyRepo.existsByEmployeeId(employeeId);
         if (hasPreviousAttendance) return;
