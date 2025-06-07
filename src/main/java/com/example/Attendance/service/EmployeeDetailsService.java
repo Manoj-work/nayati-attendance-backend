@@ -11,7 +11,7 @@ import org.springframework.web.client.RestTemplate;
 @RequiredArgsConstructor
 public class EmployeeDetailsService {
     private RestTemplate restTemplate = new RestTemplate();
-    private static final String EMPLOYEE_SERVICE_BASE_URL = "http://192.168.0.200:8083/employee";
+    private static final String EMPLOYEE_SERVICE_BASE_URL = "http://192.168.0.200:8080/employee";
 
     public EmployeeDetailsDTO getEmployeeDetails(String employeeId) {
         try {
