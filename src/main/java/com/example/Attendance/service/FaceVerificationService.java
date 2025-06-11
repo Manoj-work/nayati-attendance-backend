@@ -33,6 +33,9 @@ public class FaceVerificationService {
     @Value("${minio.secretKey}")
     private String secretkey;
 
+    @Value("${PYTHON_FACE_RECOGNITION}")
+    private String PYTHON_FACE_RECOGNITION;
+
 
 
     private final RestTemplate restTemplate = new RestTemplate();
@@ -121,5 +124,27 @@ public class FaceVerificationService {
         File tempFile = File.createTempFile("uploaded_", ".jpg");
         file.transferTo(tempFile);
         return tempFile;
+    }
+
+    public Map<String, Object> recognizeFace(MultipartFile file) throws IOException {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", new FileSystemResource(convertMultipartFileToFile(file)));
+
+        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    PYTHON_FACE_RECOGNITION+"upload/",
+                HttpMethod.POST,
+                requestEntity,
+                Map.class
+            );
+            return response.getBody();
+        } catch (Exception e) {
+            throw new RuntimeException("Error communicating with face recognition service: " + e.getMessage());
+        }
     }
 }

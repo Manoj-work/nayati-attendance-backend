@@ -3,6 +3,7 @@ package com.example.Attendance.service;
 import com.example.Attendance.dto.EmployeeDetailsDTO;
 import com.example.Attendance.exception.CustomException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -10,8 +11,10 @@ import org.springframework.web.client.RestTemplate;
 @Service
 @RequiredArgsConstructor
 public class EmployeeDetailsService {
+    @Value("${EMPLOYEE_SERVICE_URL}")
+    private String EMPLOYEE_SERVICE_BASE_URL;
+
     private RestTemplate restTemplate = new RestTemplate();
-    private static final String EMPLOYEE_SERVICE_BASE_URL = "http://192.168.0.200:8080/employee";
 
     public EmployeeDetailsDTO getEmployeeDetails(String employeeId) {
         try {

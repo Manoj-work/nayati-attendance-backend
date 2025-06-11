@@ -7,37 +7,48 @@ import com.example.Attendance.model.DailyAttendance;
 import com.example.Attendance.model.EmployeeAttendanceSummary;
 import com.example.Attendance.repository.DailyAttendanceRepository;
 import com.example.Attendance.repository.EmployeeAttendanceSummaryRepository;
-import com.example.Attendance.user.User;
-import com.example.Attendance.user.UserRepository;
+import com.example.Attendance.util.MinIOService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.*;
-import java.util.stream.Collectors;
 
-import com.example.Attendance.service.EmployeeDetailsService;
 import com.example.Attendance.dto.EmployeeDetailsDTO;
+import org.springframework.web.client.HttpClientErrorException;
+import com.example.Attendance.model.RegisteredUser;
+import com.example.Attendance.repository.RegisteredUserRepository;
 
 @Service
 @RequiredArgsConstructor
 public class AttendanceService {
 
+    @Value("${EMPLOYEE_SERVICE_URL}")
+    private String EMPLOYEE_SERVICE_BASE_URL;
+
+    @Value("${PYTHON_FACE_RECOGNITION}")
+    private String PYTHON_FACE_RECOGNITION;
+
+
+
     private final DailyAttendanceRepository dailyRepo;
     private final EmployeeAttendanceSummaryRepository summaryRepo;
-    private final UserRepository userRepository;
     private final EmployeeDetailsService employeeDetailsService;
     private final FaceVerificationService faceVerificationService;
     private final MinIOService minIOService;
+    private final RegisteredUserRepository registeredUserRepository;
 
     public String handleFaceCheckin(String employeeId, MultipartFile file, LocalDateTime checkinTime) throws IOException {
         // 1. Get employee details from external service
@@ -317,14 +328,14 @@ public class AttendanceService {
     }
 
     public void markAllEmployeesWeekendsForCurrentMonth() {
-        List<User> allUsers = userRepository.findAll();
+        List<RegisteredUser> allUsers = registeredUserRepository.findAll();
 
         YearMonth yearMonth = YearMonth.now();
         int year = yearMonth.getYear();
         int month = yearMonth.getMonthValue();
 
-        for (User user : allUsers) {
-            markWeekendsForEmployee(user.getEmployeeId(), year, month);
+        for (RegisteredUser user : allUsers) {
+            markWeekendsForEmployee(user.getEmpId(), year, month);
         }
     }
 
@@ -336,13 +347,111 @@ public class AttendanceService {
         markAllEmployeesWeekendsForCurrentMonth();
     }
 
+    public String registerEmployee(String empId, String empName, MultipartFile empImage) throws IOException {
+        // 1. Check if employee exists in the main system
+        RestTemplate restTemplate = new RestTemplate();
+        try {
+            ResponseEntity<Map> response = restTemplate.getForEntity(
+                    EMPLOYEE_SERVICE_BASE_URL + empId + "/attendance-details",
+                Map.class
+            );
+            
+            // If we get here, employee exists in main system
+            Map<String, Object> employeeDetails = response.getBody();
+            
+            // 2. Check if employee is already registered for attendance
+            Optional<RegisteredUser> existingUser = registeredUserRepository.findByEmpId(empId);
+            if (existingUser.isPresent()) {
+                return "Employee already registered for attendance";
+            }
+
+            // 3. Upload image to MinIO in registration bucket
+            String imgUrl = minIOService.getPhotoUrl(empId, empImage);
+
+            // 4. Call registration API
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("file", empImage.getResource());
+            body.add("name", empName);
+            body.add("empId", empId);
+            body.add("imgUrl", imgUrl);
+
+            HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+            
+            ResponseEntity<String> registrationResponse = restTemplate.postForEntity(
+                    PYTHON_FACE_RECOGNITION+"register",
+                requestEntity,
+                String.class
+            );
+
+            return registrationResponse.getBody();
+
+        } catch (HttpClientErrorException.NotFound e) {
+            return "Employee not found in the system";
+        } catch (Exception e) {
+            throw new RuntimeException("Error during employee registration: " + e.getMessage());
+        }
+    }
+
+    public Map<String, Object> handleFaceRecognitionAttendance(MultipartFile file) throws IOException {
+        byte[] fileBytes = file.getBytes();
+
+        // 1. Call face recognition API
+        Map<String, Object> recognitionResult = faceVerificationService.recognizeFace(file);
+        
+        // 2. Check if employee was found
+        if (!"present".equalsIgnoreCase((String) recognitionResult.get("status"))) {
+            return Map.of(
+                "status", "not found",
+                "message", "Employee not recognized"
+            );
+        }
+
+        // 3. Get employee details
+        String employeeId = (String) recognitionResult.get("empId");
+        EmployeeDetailsDTO employeeDetails = employeeDetailsService.getEmployeeDetails(employeeId);
+        String name = employeeDetails.getName();
+
+        // 4. Check if already checked in and not checked out
+        LocalDateTime checkinTime = LocalDateTime.now();
+        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
+        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, today);
+
+        if (existingAttendance.isPresent()) {
+            List<CheckInOut> logs = existingAttendance.get().getLogs();
+            if (!logs.isEmpty()) {
+                CheckInOut lastLog = logs.get(logs.size() - 1);
+                if (lastLog.getType().equals("checkin")) {
+                    return Map.of(
+                        "status", "error",
+                        "message", "Please check out before checking in again"
+                    );
+                }
+            }
+        }
+
+        // 4. Rebuild MultipartFile for MinIO
+        MultipartFile newFile = buildMultipartFileFromBytes(file, fileBytes);
+
+        // 5. Upload check-in image
+        String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
 
 
 
 
+        // 6. Record daily attendance
+        recordDailyAttendance(employeeId, name, checkinImgUrl, checkinTime);
 
-
-
+        // 7. Return success response
+        return Map.of(
+            "status", "present",
+            "employee", name,
+            "emp_id", employeeId,
+            "message", "Attendance marked successfully"
+        );
+    }
 
     // Helper Methods
     private MultipartFile buildMultipartFileFromBytes(MultipartFile original, byte[] bytes) {
@@ -371,6 +480,14 @@ public class AttendanceService {
         dailyRepo.save(daily);
 
         updateSummaryOnCheckIn(employeeId, today.toLocalDate());
+    }
+
+    public List<RegisteredUser> getRegisteredUsers() {
+        return registeredUserRepository.findAll();
+    }
+
+    public Optional<RegisteredUser> getRegisteredUserByEmpId(String empId) {
+        return registeredUserRepository.findByEmpId(empId);
     }
 
 }

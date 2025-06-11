@@ -1,4 +1,4 @@
-package com.example.Attendance.service;
+package com.example.Attendance.util;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -17,8 +17,8 @@ public class MinIOService {
     @Value("${minio.serviceUrl}")
     private String minioServiceUrl;
 
-    @Value("${minio.bucket-name}")
-    private String bucketName;
+    @Value("${minio.attendanceBucketName}")
+    private String attendanceBucketName;
 
     @Value("${minio.checkinBucketName}")
     private String checkinBucketName;
@@ -50,7 +50,7 @@ public class MinIOService {
     }
 
     public String getPhotoUrl(String employeeId, MultipartFile file) {
-        return uploadFile(bucketName, employeeId, file);
+        return uploadFile(attendanceBucketName, employeeId, file);
     }
 
     public String getCheckinImgUrl(String employeeId, MultipartFile file) {

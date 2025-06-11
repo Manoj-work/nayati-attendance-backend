@@ -3,6 +3,7 @@ package com.example.Attendance.controller;
 import com.example.Attendance.dto.BulkAttendanceRequest;
 import com.example.Attendance.dto.DayAttendanceResponse;
 import com.example.Attendance.model.DailyAttendance;
+import com.example.Attendance.model.RegisteredUser;
 import com.example.Attendance.service.AttendanceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -13,7 +14,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/attendance")
@@ -23,14 +26,11 @@ public class AttendanceController {
     private final AttendanceService attendanceService;
 
     @PostMapping("/checkin")
-    public ResponseEntity<String> checkinUser(@RequestParam String employeeId,
-                                              @RequestParam MultipartFile file,
-                                              @RequestParam(required = false) LocalDateTime checkinTime) throws IOException {
-        String result = attendanceService.handleFaceCheckin(employeeId, file, checkinTime);
+    public ResponseEntity<Map<String, Object>> markAttendanceWithFace(
+            @RequestParam MultipartFile file) throws IOException {
+        Map<String, Object> result = attendanceService.handleFaceRecognitionAttendance(file);
         return ResponseEntity.ok(result);
     }
-
-
 
     @PostMapping("/checkout")
     public ResponseEntity<String> checkOut(@RequestParam String employeeId) {
@@ -58,7 +58,6 @@ public class AttendanceController {
         return ResponseEntity.ok("Attendance updated for selected dates.");
     }
 
-
     @GetMapping("/mark-weekends")
     public ResponseEntity<String> manuallyMarkWeekends() {
         attendanceService.markAllEmployeesWeekendsForCurrentMonth();
@@ -74,7 +73,29 @@ public class AttendanceController {
         return ResponseEntity.ok("Weekends marked for current month!");
     }
 
+    @PostMapping("/register")
+    public ResponseEntity<String> registerEmployee(
+            @RequestParam String empId,
+            @RequestParam String empName,
+            @RequestParam MultipartFile empImage) throws IOException {
+        String result = attendanceService.registerEmployee(empId, empName, empImage);
+        return ResponseEntity.ok(result);
+    }
 
+
+
+    @GetMapping("/registered-users")
+    public ResponseEntity<List<RegisteredUser>> getRegisteredUsers() {
+        List<RegisteredUser> users = attendanceService.getRegisteredUsers();
+        return ResponseEntity.ok(users);
+    }
+
+    @GetMapping("/registered-users/{empId}")
+    public ResponseEntity<RegisteredUser> getRegisteredUserByEmpId(@PathVariable String empId) {
+        Optional<RegisteredUser> user = attendanceService.getRegisteredUserByEmpId(empId);
+        return user.map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
 
 }
 
