@@ -14,6 +14,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +32,14 @@ public class AttendanceController {
         Map<String, Object> result = attendanceService.handleFaceRecognitionAttendance(file);
         return ResponseEntity.ok(result);
     }
+
+    @PostMapping("/manual-checkin")
+    public ResponseEntity<Map<String,Object>> markManualAttendance(
+            @RequestParam String empId) throws IOException{
+        Map<String,Object> result = attendanceService.manualAttendanceMarking(empId);
+        return ResponseEntity.ok(result);
+    }
+
 
     @PostMapping("/checkout")
     public ResponseEntity<String> checkOut(@RequestParam String employeeId) {
@@ -91,11 +100,24 @@ public class AttendanceController {
     }
 
     @GetMapping("/registered-users/{empId}")
-    public ResponseEntity<RegisteredUser> getRegisteredUserByEmpId(@PathVariable String empId) {
+    public ResponseEntity<?> getRegisteredUserByEmpId(@PathVariable String empId) {
         Optional<RegisteredUser> user = attendanceService.getRegisteredUserByEmpId(empId);
-        return user.map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+
+        if (user.isPresent()) {
+            return ResponseEntity.ok(Map.of(
+                    "status", true,
+                    "message", "Employee found",
+                    "data", user.get()
+            ));
+        } else {
+           return ResponseEntity.ok(Map.of(
+                   "status",false,
+                   "message","Employee not found"
+           ));
+        }
     }
+
+
 
 }
 

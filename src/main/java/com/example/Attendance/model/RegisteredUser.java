@@ -1,6 +1,7 @@
 package com.example.Attendance.model;
 
 import lombok.Data;
+import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -12,5 +13,6 @@ public class RegisteredUser {
     private String empId;
     private String name;
     private String imgUrl;
+    @CreatedDate
     private String registeredAt;
 } 

@@ -438,9 +438,6 @@ public class AttendanceService {
         // 5. Upload check-in image
         String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
 
-
-
-
         // 6. Record daily attendance
         recordDailyAttendance(employeeId, name, checkinImgUrl, checkinTime);
 
@@ -450,6 +447,42 @@ public class AttendanceService {
             "employee", name,
             "emp_id", employeeId,
             "message", "Attendance marked successfully"
+        );
+    }
+
+    public Map<String, Object> manualAttendanceMarking(String empId){
+
+        EmployeeDetailsDTO employeeDetails = employeeDetailsService.getEmployeeDetails(empId);
+        String empName = employeeDetails.getName();
+
+        LocalDateTime checkinTime = LocalDateTime.now();
+        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
+        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(empId, today);
+
+        if (existingAttendance.isPresent()) {
+            List<CheckInOut> logs = existingAttendance.get().getLogs();
+            if (!logs.isEmpty()) {
+                CheckInOut lastLog = logs.get(logs.size() - 1);
+                if (lastLog.getType().equals("checkin")) {
+                    return Map.of(
+                            "status", "error",
+                            "message", "Please check out before checking in again"
+                    );
+                }
+            }
+        }
+
+//        String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
+
+        // 6. Record daily attendance
+        recordDailyAttendance(empId,empName, "markedManually", checkinTime);
+
+        // 7. Return success response
+        return Map.of(
+                "status", "present",
+                "employee", empName,
+                "emp_id", empId,
+                "message", "Attendance marked successfully"
         );
     }
 
