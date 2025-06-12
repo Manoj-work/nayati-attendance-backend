@@ -35,8 +35,9 @@ public class AttendanceController {
 
     @PostMapping("/manual-checkin")
     public ResponseEntity<Map<String,Object>> markManualAttendance(
-            @RequestParam String empId) throws IOException{
-        Map<String,Object> result = attendanceService.manualAttendanceMarking(empId);
+            @RequestParam String empId,
+            @RequestParam MultipartFile file) throws IOException{
+        Map<String,Object> result = attendanceService.manualAttendanceMarking(empId,file);
         return ResponseEntity.ok(result);
     }
 

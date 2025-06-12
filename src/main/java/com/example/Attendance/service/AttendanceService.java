@@ -450,7 +450,7 @@ public class AttendanceService {
         );
     }
 
-    public Map<String, Object> manualAttendanceMarking(String empId){
+    public Map<String, Object> manualAttendanceMarking(String empId, MultipartFile file){
 
         EmployeeDetailsDTO employeeDetails = employeeDetailsService.getEmployeeDetails(empId);
         String empName = employeeDetails.getName();
@@ -472,7 +472,7 @@ public class AttendanceService {
             }
         }
 
-//        String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
+        String checkinImgUrl = minIOService.getCheckinImgUrl(empId, file);
 
         // 6. Record daily attendance
         recordDailyAttendance(empId,empName, "markedManually", checkinTime);
