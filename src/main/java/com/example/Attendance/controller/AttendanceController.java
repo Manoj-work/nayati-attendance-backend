@@ -20,20 +20,29 @@ import java.util.Map;
 import java.util.Optional;
 
 @RestController
-@RequestMapping("/attendance")
+@RequestMapping("/")
 @RequiredArgsConstructor
 public class AttendanceController {
 
     private final AttendanceService attendanceService;
 
-    @PostMapping("/checkin")
+    @PostMapping("employee/checkin")
     public ResponseEntity<Map<String, Object>> markAttendanceWithFace(
+            @RequestParam String empId,
             @RequestParam MultipartFile file) throws IOException {
-        Map<String, Object> result = attendanceService.handleFaceRecognitionAttendance(file);
+        Map<String, Object> result = attendanceService.handleSingleCheckin(file,empId);
         return ResponseEntity.ok(result);
     }
 
-    @PostMapping("/manual-checkin")
+    @PostMapping("manager/checkin")
+    public ResponseEntity<Map<String, Object>> teamcheckinwithface(
+            @RequestParam String managerId,
+            @RequestParam MultipartFile file) throws IOException {
+        Map<String, Object> result = attendanceService.handleTeamcheckin(file,managerId);
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("employee/manual-checkin")
     public ResponseEntity<Map<String,Object>> markManualAttendance(
             @RequestParam String empId,
             @RequestParam MultipartFile file) throws IOException{
@@ -42,19 +51,19 @@ public class AttendanceController {
     }
 
 
-    @PostMapping("/checkout")
+    @PostMapping("employee/checkout")
     public ResponseEntity<String> checkOut(@RequestParam String employeeId) {
         return ResponseEntity.ok(attendanceService.checkOut(employeeId));
     }
 
-    @GetMapping("/daily/{employeeId}/{date}")
+    @GetMapping("employee/daily/{employeeId}/{date}")
     public ResponseEntity<DayAttendanceResponse> getDailyData(
             @PathVariable String employeeId,
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return ResponseEntity.ok(attendanceService.getDailyData(employeeId, date));
     }
 
-    @GetMapping("/monthly/{employeeId}/{year}/{month}")
+    @GetMapping("employee/monthly/{employeeId}/{year}/{month}")
     public ResponseEntity<Map<String, Object>> getMonthlySummary(
             @PathVariable String employeeId,
             @PathVariable String year,
@@ -62,19 +71,19 @@ public class AttendanceController {
         return ResponseEntity.ok(attendanceService.getMonthlySummary(employeeId, year, month));
     }
 
-    @PostMapping("/mark-bulk")
+    @PostMapping("manager/mark-bulk")
     public ResponseEntity<String> markBulkAttendance(@RequestBody BulkAttendanceRequest request) {
         attendanceService.markBulkAttendance(request.getEmployeeId(), request.getStatus(), request.getLeaveId(), request.getDates());
         return ResponseEntity.ok("Attendance updated for selected dates.");
     }
 
-    @GetMapping("/mark-weekends")
+    @GetMapping("manager/mark-weekends")
     public ResponseEntity<String> manuallyMarkWeekends() {
         attendanceService.markAllEmployeesWeekendsForCurrentMonth();
         return ResponseEntity.ok("Weekends marked for current month!");
     }
 
-    @GetMapping("/mark-weekends/{employeeId}/{year}/{month}")
+    @GetMapping("manager/mark-weekends/{employeeId}/{year}/{month}")
     public ResponseEntity<String> manuallyMarkWeekends(
             @PathVariable String employeeId,
             @PathVariable int  year,
@@ -83,7 +92,7 @@ public class AttendanceController {
         return ResponseEntity.ok("Weekends marked for current month!");
     }
 
-    @PostMapping("/register")
+    @PostMapping("employee/register")
     public ResponseEntity<String> registerEmployee(
             @RequestParam String empId,
             @RequestParam String empName,
@@ -94,13 +103,13 @@ public class AttendanceController {
 
 
 
-    @GetMapping("/registered-users")
+    @GetMapping("manager/registered-users")
     public ResponseEntity<List<RegisteredUser>> getRegisteredUsers() {
         List<RegisteredUser> users = attendanceService.getRegisteredUsers();
         return ResponseEntity.ok(users);
     }
 
-    @GetMapping("/registered-users/{empId}")
+    @GetMapping("manager/registered-users/{empId}")
     public ResponseEntity<?> getRegisteredUserByEmpId(@PathVariable String empId) {
         Optional<RegisteredUser> user = attendanceService.getRegisteredUserByEmpId(empId);
 
@@ -117,8 +126,6 @@ public class AttendanceController {
            ));
         }
     }
-
-
 
 }
 

@@ -13,6 +13,4 @@ public class RegisteredUser {
     private String empId;
     private String name;
     private String imgUrl;
-    @CreatedDate
-    private String registeredAt;
 } 
