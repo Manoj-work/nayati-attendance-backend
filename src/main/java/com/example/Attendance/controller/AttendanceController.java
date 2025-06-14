@@ -2,7 +2,6 @@ package com.example.Attendance.controller;
 
 import com.example.Attendance.dto.BulkAttendanceRequest;
 import com.example.Attendance.dto.DayAttendanceResponse;
-import com.example.Attendance.model.DailyAttendance;
 import com.example.Attendance.model.RegisteredUser;
 import com.example.Attendance.service.AttendanceService;
 import lombok.RequiredArgsConstructor;
@@ -13,8 +12,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
