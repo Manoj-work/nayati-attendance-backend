@@ -30,6 +30,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import com.example.Attendance.repository.RegisteredUserRepository;
 
 import static java.util.Arrays.stream;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -499,6 +500,65 @@ public class AttendanceService {
 
     public Optional<RegisteredUser> getRegisteredUserByEmpId(String empId) {
         return registeredUserRepository.findByEmpId(empId);
+    }
+
+    public Map<String, Object> getTeamCheckInStatus(String managerId) {
+        // Get manager's team members
+        Optional<Employee> manager = employeeService.getEmployeeByEmpId(managerId);
+        if (manager.isEmpty()) {
+            throw new CustomException("Manager not found", HttpStatus.NOT_FOUND);
+        }
+        List<String> teamMembers = manager.get().getAssignTo();
+        
+        // Get today's date
+        LocalDateTime today = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0).withNano(0);
+        
+        // Batch fetch all team members' attendance for today in a single query
+        List<DailyAttendance> teamAttendance = dailyRepo.findByEmployeeIdInAndDate(teamMembers, today);
+        
+        // Create a map for quick lookup of attendance status
+        Map<String, DailyAttendance> attendanceMap = teamAttendance.stream()
+                .collect(Collectors.toMap(DailyAttendance::getEmployeeId, attendance -> attendance));
+        
+        // Batch fetch all team members' details in a single query
+        List<Employee> teamDetails = employeeService.getEmployeesByEmpIds(teamMembers);
+        Map<String, Employee> employeeMap = teamDetails.stream()
+                .collect(Collectors.toMap(Employee::getEmployeeId, employee -> employee));
+        
+        // Create response map
+        Map<String, Object> response = new HashMap<>();
+        List<Map<String, Object>> teamStatus = new ArrayList<>();
+        
+        // Process all team members at once
+        for (String empId : teamMembers) {
+            Map<String, Object> memberStatus = new HashMap<>();
+            memberStatus.put("empId", empId);
+            
+            // Get employee details from the map
+            Employee employee = employeeMap.get(empId);
+            if (employee == null) continue;
+            memberStatus.put("name", employee.getName());
+            
+            // Get attendance status from the map
+            DailyAttendance attendance = attendanceMap.get(empId);
+            if (attendance != null && !attendance.getLogs().isEmpty()) {
+                CheckInOut lastLog = attendance.getLogs().get(attendance.getLogs().size() - 1);
+                memberStatus.put("status", lastLog.getType().equals("checkin") ? "checked_in" : "checked_out");
+                memberStatus.put("lastActionTime", lastLog.getTimestamp());
+            } else {
+                memberStatus.put("status", "not_checked_in");
+            }
+            
+            teamStatus.add(memberStatus);
+        }
+        
+        response.put("teamStatus", teamStatus);
+        response.put("totalMembers", teamMembers.size());
+        response.put("checkedInCount", teamStatus.stream()
+                .filter(status -> "checked_in".equals(status.get("status")))
+                .count());
+        
+        return response;
     }
 
 }

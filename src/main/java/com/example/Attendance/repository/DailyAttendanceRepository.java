@@ -15,4 +15,6 @@ public interface DailyAttendanceRepository extends MongoRepository<DailyAttendan
     boolean existsByEmployeeId(String employeeId);
 
     List<DailyAttendance> findByEmployeeIdAndDateBetween(String employeeId, LocalDateTime startDate, LocalDateTime endDate);
+
+    List<DailyAttendance> findByEmployeeIdInAndDate(List<String> employeeIds, LocalDateTime date);
 }
