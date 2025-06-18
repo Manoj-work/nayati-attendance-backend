@@ -561,6 +561,33 @@ public class AttendanceService {
         return response;
     }
 
+    public Map<String, Object> getRegisteredTeamMembers(String managerId) {
+        // Get manager's team members
+        Optional<Employee> manager = employeeService.getEmployeeByEmpId(managerId);
+        if (manager.isEmpty()) {
+            throw new CustomException("Manager not found", HttpStatus.NOT_FOUND);
+        }
+        List<String> teamMembers = manager.get().getAssignTo();
+        
+        // Get all registered users
+        List<RegisteredUser> allRegisteredUsers = registeredUserRepository.findAll();
+        Set<String> registeredEmpIds = allRegisteredUsers.stream()
+                .map(RegisteredUser::getEmpId)
+                .collect(Collectors.toSet());
+        
+        // Filter team members who are registered for attendance
+        List<String> registeredTeamMembers = teamMembers.stream()
+                .filter(registeredEmpIds::contains)
+                .collect(Collectors.toList());
+        
+        return Map.of(
+                "managerId", managerId,
+                "totalTeamMembers", teamMembers.size(),
+                "registeredTeamMembers", registeredTeamMembers.size(),
+                "registeredEmpIds", registeredTeamMembers
+        );
+    }
+
 }
 
 

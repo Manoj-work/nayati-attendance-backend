@@ -129,5 +129,10 @@ public class AttendanceController {
         return ResponseEntity.ok(attendanceService.getTeamCheckInStatus(managerId));
     }
 
+    @GetMapping("manager/registered-team-members/{managerId}")
+    public ResponseEntity<Map<String, Object>> getRegisteredTeamMembers(@PathVariable String managerId) {
+        return ResponseEntity.ok(attendanceService.getRegisteredTeamMembers(managerId));
+    }
+
 }
 
