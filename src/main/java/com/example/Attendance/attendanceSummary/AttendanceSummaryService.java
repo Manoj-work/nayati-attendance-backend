@@ -31,18 +31,28 @@ public class AttendanceSummaryService {
         }
         Employee employee = empOpt.get();
 
+        // Start date is always the first of the month
+        java.time.YearMonth ym = java.time.YearMonth.of(year, month);
+        java.time.LocalDate start = ym.atDay(1);
+        // End date is the lesser of today or the last day of the month
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDate end = ym.atEndOfMonth();
+        if (today.isBefore(end)) {
+            end = today;
+        }
+
         // 1. Get present dates from daily attendance
-        List<LocalDate> presentDates = getPresentDates(employeeId, year, month);
+        List<LocalDate> presentDates = getPresentDates(employeeId, start, end);
 
         // 2. Get leave and comp-off dates
-        LeaveDatesSummary leaveSummary = getLeaveDates(employeeId, year, month);
+        LeaveDatesSummary leaveSummary = getLeaveDates(employeeId, start, end, year, month);
 
         // 3. Get weekly off dates from employee profile
         List<String> weeklyOffs = employee.getWeeklyOffs();
-        List<LocalDate> weeklyOffDates = calculateWeeklyOffDates(weeklyOffs, year, month);
+        List<LocalDate> weeklyOffDates = calculateWeeklyOffDates(weeklyOffs, start, end);
 
-        // 4. Calculate all dates in month
-        List<LocalDate> allDates = getAllDatesInMonth(year, month);
+        // 4. Calculate all dates in month up to today or end of month
+        List<LocalDate> allDates = getAllDatesInRange(start, end);
 
         // 5. Calculate absent dates
         Set<LocalDate> excluded = new HashSet<>();
@@ -77,10 +87,7 @@ public class AttendanceSummaryService {
         List<LocalDate> halfCompoffDates = new ArrayList<>();
     }
 
-    private List<LocalDate> getPresentDates(String employeeId, int year, int month) {
-        YearMonth ym = YearMonth.of(year, month);
-        LocalDate start = ym.atDay(1);
-        LocalDate end = ym.atEndOfMonth();
+    private List<LocalDate> getPresentDates(String employeeId, java.time.LocalDate start, java.time.LocalDate end) {
         List<DailyAttendance> records = dailyAttendanceRepository.findByEmployeeIdAndDateBetween(employeeId, start.atStartOfDay(), end.atTime(23,59,59));
         return records.stream()
                 .filter(d -> d.getLogs() != null && !d.getLogs().isEmpty())
@@ -88,10 +95,7 @@ public class AttendanceSummaryService {
                 .collect(Collectors.toList());
     }
 
-    private LeaveDatesSummary getLeaveDates(String employeeId, int year, int month) {
-        YearMonth ym = YearMonth.of(year, month);
-        LocalDate start = ym.atDay(1);
-        LocalDate end = ym.atEndOfMonth();
+    private LeaveDatesSummary getLeaveDates(String employeeId, java.time.LocalDate start, java.time.LocalDate end, int year, int month) {
         List<LeaveModel> leaves = leaveRepository.findByEmployeeIdAndStatusAndLeaveDatesBetween(employeeId, "Approved", start, end);
         LeaveDatesSummary summary = new LeaveDatesSummary();
         for (LeaveModel leave : leaves) {
@@ -110,26 +114,29 @@ public class AttendanceSummaryService {
         return summary;
     }
 
-    private List<LocalDate> calculateWeeklyOffDates(List<String> weeklyOffs, int year, int month) {
+    private List<LocalDate> calculateWeeklyOffDates(List<String> weeklyOffs, java.time.LocalDate start, java.time.LocalDate end) {
         List<LocalDate> result = new ArrayList<>();
-        YearMonth ym = YearMonth.of(year, month);
+        java.time.YearMonth ym = java.time.YearMonth.of(start.getYear(), start.getMonth());
         // Convert weeklyOffs to uppercase for consistent comparison
         Set<String> upperWeeklyOffs = weeklyOffs.stream().map(String::toUpperCase).collect(Collectors.toSet());
         for (int day = 1; day <= ym.lengthOfMonth(); day++) {
             LocalDate date = ym.atDay(day);
             DayOfWeek dow = date.getDayOfWeek();
-            if (upperWeeklyOffs.contains(dow.name())) {
+            if (upperWeeklyOffs.contains(dow.name()) && date.isAfter(start) && date.isBefore(end)) {
                 result.add(date);
             }
         }
         return result;
     }
 
-    private List<LocalDate> getAllDatesInMonth(int year, int month) {
+    private List<LocalDate> getAllDatesInRange(java.time.LocalDate start, java.time.LocalDate end) {
         List<LocalDate> dates = new ArrayList<>();
-        YearMonth ym = YearMonth.of(year, month);
+        java.time.YearMonth ym = java.time.YearMonth.of(start.getYear(), start.getMonth());
         for (int day = 1; day <= ym.lengthOfMonth(); day++) {
-            dates.add(ym.atDay(day));
+            LocalDate date = ym.atDay(day);
+            if (date.isAfter(start) && date.isBefore(end)) {
+                dates.add(date);
+            }
         }
         return dates;
     }
