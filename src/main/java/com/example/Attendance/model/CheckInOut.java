@@ -20,5 +20,4 @@ public class CheckInOut {
     private LocalDateTime timestamp;
     private String checkinImgUrl; // Only used for checkin type
 
-    // Getters & Setters
 }

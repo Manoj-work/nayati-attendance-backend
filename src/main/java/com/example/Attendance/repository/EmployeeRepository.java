@@ -11,4 +11,5 @@ import java.util.Optional;
 public interface EmployeeRepository extends MongoRepository<Employee, String> {
     Optional<Employee> findByEmployeeId(String employeeId);
     List<Employee> findByEmployeeIdIn(List<String> employeeIds);
+    List<Employee> findByCompanyId(String companyId);
 }

@@ -17,4 +17,5 @@ public class Employee {
     private LocalDate joiningDate;
     private List<String> weeklyOffs;
     private List<String> assignTo;
+    private String companyId;
 }

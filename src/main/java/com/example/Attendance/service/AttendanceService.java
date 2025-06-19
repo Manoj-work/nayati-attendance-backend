@@ -49,7 +49,17 @@ public class AttendanceService {
     private final RegisteredUserRepository registeredUserRepository;
     private final EmployeeService employeeService;
 
+    // Helper method to check if employee is registered
+    public boolean isEmployeeRegistered(String empId) {
+        return registeredUserRepository.findByEmpId(empId).isPresent();
+    }
+
     public String checkOut(String employeeId) {
+        // Check if employee is registered
+        if (!isEmployeeRegistered(employeeId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime today = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
 
@@ -89,6 +99,11 @@ public class AttendanceService {
 
 
     public DayAttendanceResponse getDailyData(String employeeId, LocalDate date) {
+        // Check if employee is registered
+        if (!isEmployeeRegistered(employeeId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         LocalDateTime dateTime = date.atStartOfDay();
         DayAttendanceResponse response = new DayAttendanceResponse();
         
@@ -124,6 +139,11 @@ public class AttendanceService {
     }
 
     public Map<String, Object> getMonthlySummary(String employeeId, String year, String month) {
+        // Check if employee is registered
+        if (!isEmployeeRegistered(employeeId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElseThrow(() -> new CustomException("No summary found", HttpStatus.NOT_FOUND));
 
@@ -166,6 +186,11 @@ public class AttendanceService {
     }
 
     public void markBulkAttendance(String employeeId, String status, String leaveId, List<String> dateStrings) {
+        // Check if employee is registered
+        if (!isEmployeeRegistered(employeeId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
                 .orElse(new EmployeeAttendanceSummary("summary_" + employeeId, employeeId, new HashMap<>()));
 
@@ -198,6 +223,11 @@ public class AttendanceService {
 
     // mark previous days as absent
     public void markPastDaysAbsentIfFirstCheckin(String employeeId) {
+        // Check if employee is registered
+        if (!isEmployeeRegistered(employeeId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         // Get employee details from external service
         Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(employeeId);
         LocalDate joiningDate = employeeDetails.get().getJoiningDate();
@@ -242,6 +272,11 @@ public class AttendanceService {
 
     // Mark weekends for the user for a month
     public void markWeekendsForEmployee(String employeeId, int year, int month) {
+        // Check if employee is registered
+        if (!isEmployeeRegistered(employeeId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         // Get employee details from external service
         Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(employeeId);
         List<String> weeklyOffs = employeeDetails.get().getWeeklyOffs();
@@ -318,6 +353,11 @@ public class AttendanceService {
     }
 
     public Map<String, Object> handleSingleCheckin(MultipartFile file, String empId) throws IOException {
+        // Check if employee is registered
+        if (!isEmployeeRegistered(empId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         byte[] fileBytes = file.getBytes();
 
         // 1. Call face recognition API
@@ -373,6 +413,11 @@ public class AttendanceService {
     }
 
     public Map<String, Object> handleTeamcheckin(MultipartFile file, String empId) throws IOException {
+        // Check if manager is registered
+        if (!isEmployeeRegistered(empId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
         byte[] fileBytes = file.getBytes();
         Optional<Employee> employee = employeeService.getEmployeeByEmpId(empId);
         List<String> empIdList = employee.get().getAssignTo();
@@ -430,6 +475,10 @@ public class AttendanceService {
     }
 
     public Map<String, Object> manualAttendanceMarking(String empId, MultipartFile file){
+        // Check if employee is registered
+        if (!isEmployeeRegistered(empId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
 
         Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(empId);
         String empName = employeeDetails.get().getName();
