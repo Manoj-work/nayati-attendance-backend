@@ -113,6 +113,8 @@ public class AttendanceService {
         List<CheckInOut> logs = dailyAttendance.get(0).getLogs();
         if (logs == null || logs.isEmpty()) return response;
 
+        response.setDailyAttendance(dailyAttendance.get(0));
+
         // Always sort logs by timestamp to process in order
         logs.sort(Comparator.comparing(CheckInOut::getTimestamp));
 
