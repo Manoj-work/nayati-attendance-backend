@@ -1,4 +1,4 @@
-package com.example.Attendance.attendanceSummary;
+package com.example.Attendance.dto;
 
 import java.time.LocalDate;
 import java.util.List;

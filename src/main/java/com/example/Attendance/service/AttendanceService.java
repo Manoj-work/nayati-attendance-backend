@@ -20,9 +20,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.YearMonth;
+import java.time.*;
 import java.util.*;
 
 import com.example.Attendance.dto.EmployeeDetailsDTO;
@@ -99,44 +97,77 @@ public class AttendanceService {
 
 
     public DayAttendanceResponse getDailyData(String employeeId, LocalDate date) {
-        // Check if employee is registered
         if (!isEmployeeRegistered(employeeId)) {
             throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
         }
 
-        LocalDateTime dateTime = date.atStartOfDay();
         DayAttendanceResponse response = new DayAttendanceResponse();
-        
-        // First check daily attendance
-        Optional<DailyAttendance> dailyAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, dateTime);
-        if (dailyAttendance.isPresent()) {
-            response.setDailyAttendance(dailyAttendance.get());
-            return response;
+
+        LocalDateTime start = date.atStartOfDay();
+        LocalDateTime end = date.atTime(LocalTime.MAX);
+
+        List<DailyAttendance> dailyAttendance = dailyRepo.findByEmployeeIdAndDateBetween(employeeId, start, end);
+
+        if (dailyAttendance.isEmpty()) return response;
+
+        List<CheckInOut> logs = dailyAttendance.get(0).getLogs();
+        if (logs == null || logs.isEmpty()) return response;
+
+        // Always sort logs by timestamp to process in order
+        logs.sort(Comparator.comparing(CheckInOut::getTimestamp));
+
+        LocalDateTime firstCheckin = null;
+        LocalDateTime latestUnpairedCheckin = null;
+        LocalDateTime lastCheckout = null;
+        long totalSeconds = 0;
+
+        // Stack to pair checkins with checkouts
+        Deque<LocalDateTime> checkinStack = new ArrayDeque<>();
+
+        for (CheckInOut log : logs) {
+            String type = log.getType().toLowerCase();
+            LocalDateTime timestamp = log.getTimestamp();
+
+            switch (type) {
+                case "checkin":
+                    if (firstCheckin == null) {
+                        firstCheckin = timestamp;
+                    }
+                    checkinStack.push(timestamp);
+                    break;
+
+                case "checkout":
+                    if (!checkinStack.isEmpty()) {
+                        LocalDateTime pairedCheckin = checkinStack.removeLast(); // FIFO: oldest unpaired checkin
+                        totalSeconds += Duration.between(pairedCheckin, timestamp).getSeconds();
+                        lastCheckout = timestamp;
+                    }
+                    break;
+
+                default:
+                    // Optional: log or ignore unknown types
+                    break;
+            }
         }
 
-        // If no daily attendance, check summary
-        EmployeeAttendanceSummary summary = summaryRepo.findByEmployeeId(employeeId)
-                .orElseThrow(() -> new CustomException("No attendance found for this date", HttpStatus.NOT_FOUND));
-
-        String year = String.valueOf(date.getYear());
-        String month = String.valueOf(date.getMonthValue());
-        String day = String.valueOf(date.getDayOfMonth());
-
-        // Get the day's attendance from summary
-        EmployeeAttendanceSummary.DayAttendanceMeta dayMeta = summary.getYears()
-                .getOrDefault(year, new EmployeeAttendanceSummary.YearAttendance())
-                .getMonths()
-                .getOrDefault(month, new EmployeeAttendanceSummary.MonthAttendance())
-                .getDays()
-                .get(day);
-
-        if (dayMeta == null) {
-            throw new CustomException("No data found for this day", HttpStatus.NOT_FOUND);
+        // If any unpaired checkins remain, the last one is the latest checkin
+        if (!checkinStack.isEmpty()) {
+            latestUnpairedCheckin = checkinStack.peekLast();
         }
 
-        response.setSummaryAttendance(dayMeta);
+        // Set values in the response
+        response.setFirstCheckin(firstCheckin);
+        response.setLatestCheckin(latestUnpairedCheckin);
+        response.setLastCheckout(lastCheckout);
+
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        response.setWorkingHoursTillNow(String.format("%02d:%02d:%02d", hours, minutes, seconds));
+
         return response;
     }
+
 
     public Map<String, Object> getMonthlySummary(String employeeId, String year, String month) {
         // Check if employee is registered

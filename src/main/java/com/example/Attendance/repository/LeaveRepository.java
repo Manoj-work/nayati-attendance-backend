@@ -1,5 +1,6 @@
-package com.example.Attendance.attendanceSummary;
+package com.example.Attendance.repository;
 
+import com.example.Attendance.model.LeaveModel;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
