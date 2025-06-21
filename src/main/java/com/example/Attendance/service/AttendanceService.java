@@ -1,10 +1,12 @@
 package com.example.Attendance.service;
 
 import com.example.Attendance.dto.DayAttendanceResponse;
+import com.example.Attendance.dto.LogEntryDTO;
 import com.example.Attendance.exception.CustomException;
 import com.example.Attendance.model.*;
 import com.example.Attendance.repository.DailyAttendanceRepository;
 import com.example.Attendance.repository.EmployeeAttendanceSummaryRepository;
+import com.example.Attendance.util.EpochUtil;
 import com.example.Attendance.util.MinIOService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,26 +55,34 @@ public class AttendanceService {
     }
 
     public String checkOut(String employeeId) {
-        // Check if employee is registered
+        // 1. Check if employee is registered
         if (!isEmployeeRegistered(employeeId)) {
             throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime today = now.withHour(0).withMinute(0).withSecond(0).withNano(0);
+        // 2. Get current UTC time and today's start (in IST)
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        long currentEpoch = EpochUtil.currentEpochSeconds();
+        long todayEpoch = EpochUtil.toEpochSeconds(LocalDateTime.now(zone).toLocalDate().atStartOfDay(), zone);
 
-        DailyAttendance daily = dailyRepo.findByEmployeeIdAndDate(employeeId, today)
+        // 3. Find today's attendance record
+        DailyAttendance daily = dailyRepo.findByEmployeeIdAndDateEpoch(employeeId, todayEpoch)
                 .orElseThrow(() -> new CustomException("No check-in found for today", HttpStatus.NOT_FOUND));
 
+        // 4. Validate last log is a check-in
         List<CheckInOut> logs = daily.getLogs();
-        if (logs.isEmpty() || !logs.get(logs.size() - 1).getType().equals("checkin")) {
+        if (logs.isEmpty() || !"checkin".equalsIgnoreCase(logs.get(logs.size() - 1).getType())) {
             throw new CustomException("No check-in found for today", HttpStatus.BAD_REQUEST);
         }
 
-        logs.add(new CheckInOut("checkout", now, null));
+        // 5. Add checkout log with epoch timestamp
+        logs.add(new CheckInOut("checkout", currentEpoch, null));
+
+        // 6. Save and return
         dailyRepo.save(daily);
         return "Check-out recorded!";
     }
+
 
     private void updateSummaryOnCheckIn(String employeeId, LocalDate date) {
         String year = String.valueOf(date.getYear());
@@ -103,61 +113,63 @@ public class AttendanceService {
 
         DayAttendanceResponse response = new DayAttendanceResponse();
 
-        LocalDateTime start = date.atStartOfDay();
-        LocalDateTime end = date.atTime(LocalTime.MAX);
+        // 1. Get start of day epoch in IST
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        long dayStartEpoch = EpochUtil.toEpochSeconds(date.atStartOfDay(), zone);
 
-        List<DailyAttendance> dailyAttendance = dailyRepo.findByEmployeeIdAndDateBetween(employeeId, start, end);
+        // 2. Fetch attendance for the specific day
+        Optional<DailyAttendance> optionalAttendance = dailyRepo.findByEmployeeIdAndDateEpoch(employeeId, dayStartEpoch);
+        if (optionalAttendance.isEmpty()) return response;
 
-        if (dailyAttendance.isEmpty()) return response;
-
-        List<CheckInOut> logs = dailyAttendance.get(0).getLogs();
+        DailyAttendance dailyAttendance = optionalAttendance.get();
+        List<CheckInOut> logs = dailyAttendance.getLogs();
         if (logs == null || logs.isEmpty()) return response;
 
-        response.setDailyAttendance(dailyAttendance.get(0));
+//        response.setDailyAttendance(dailyAttendance);
 
-        // Always sort logs by timestamp to process in order
-        logs.sort(Comparator.comparing(CheckInOut::getTimestamp));
+        // 3. Sort logs by timestampEpoch
+        logs.sort(Comparator.comparingLong(CheckInOut::getTimestampEpoch));
 
+        // 4. Prepare for pairing and time tracking
         LocalDateTime firstCheckin = null;
         LocalDateTime latestUnpairedCheckin = null;
         LocalDateTime lastCheckout = null;
         long totalSeconds = 0;
 
-        // Stack to pair checkins with checkouts
-        Deque<LocalDateTime> checkinStack = new ArrayDeque<>();
+        Deque<Long> checkinStack = new ArrayDeque<>();
 
         for (CheckInOut log : logs) {
             String type = log.getType().toLowerCase();
-            LocalDateTime timestamp = log.getTimestamp();
+            long timestampEpoch = log.getTimestampEpoch();
 
             switch (type) {
                 case "checkin":
                     if (firstCheckin == null) {
-                        firstCheckin = timestamp;
+                        firstCheckin = EpochUtil.fromEpochSeconds(timestampEpoch, zone);
                     }
-                    checkinStack.push(timestamp);
+                    checkinStack.push(timestampEpoch);
                     break;
 
                 case "checkout":
                     if (!checkinStack.isEmpty()) {
-                        LocalDateTime pairedCheckin = checkinStack.removeLast(); // FIFO: oldest unpaired checkin
-                        totalSeconds += Duration.between(pairedCheckin, timestamp).getSeconds();
-                        lastCheckout = timestamp;
+                        long pairedCheckinEpoch = checkinStack.removeLast();
+                        totalSeconds += (timestampEpoch - pairedCheckinEpoch);
+                        lastCheckout = EpochUtil.fromEpochSeconds(timestampEpoch, zone);
                     }
                     break;
 
                 default:
-                    // Optional: log or ignore unknown types
+                    // Optional: log or skip unknown types
                     break;
             }
         }
 
-        // If any unpaired checkins remain, the last one is the latest checkin
+        // If any unpaired checkins remain, get the latest one
         if (!checkinStack.isEmpty()) {
-            latestUnpairedCheckin = checkinStack.peekLast();
+            latestUnpairedCheckin = EpochUtil.fromEpochSeconds(checkinStack.peekLast(), zone);
         }
 
-        // Set values in the response
+        // 5. Set response fields
         response.setFirstCheckin(firstCheckin);
         response.setLatestCheckin(latestUnpairedCheckin);
         response.setLastCheckout(lastCheckout);
@@ -166,6 +178,18 @@ public class AttendanceService {
         long minutes = (totalSeconds % 3600) / 60;
         long seconds = totalSeconds % 60;
         response.setWorkingHoursTillNow(String.format("%02d:%02d:%02d", hours, minutes, seconds));
+
+        List<LogEntryDTO> readableLogs = logs.stream()
+                .map(log -> new LogEntryDTO(
+                        log.getType(),
+                        EpochUtil.fromEpochSeconds(log.getTimestampEpoch(), zone).toString(),
+                        log.getCheckinImgUrl()
+                ))
+                .collect(Collectors.toList());
+
+//        response.setReadableLogs(readableLogs);
+
+        response.setDailyAttendance(readableLogs);
 
         return response;
     }
@@ -386,79 +410,17 @@ public class AttendanceService {
     }
 
     public Map<String, Object> handleSingleCheckin(MultipartFile file, String empId) throws IOException {
-        // Check if employee is registered
+        // 1. Check if employee is registered
         if (!isEmployeeRegistered(empId)) {
             throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
         }
 
         byte[] fileBytes = file.getBytes();
 
-        // 1. Call face recognition API
-        Map<String, Object> recognitionResult = faceVerificationService.verifyByEmpId(file,empId);
-        
-        // 2. Check if employee was found
-        if ((!"match".equalsIgnoreCase((String) recognitionResult.get("status")))) {
-            return Map.of(
-                "status", "not found",
-                "message", "Employee not recognized"
-            );
-        }
+        // 2. Call face recognition API
+        Map<String, Object> recognitionResult = faceVerificationService.verifyByEmpId(file, empId);
 
-        // 3. Get employee details
-        String employeeId = (String) recognitionResult.get("empId");
-        Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(employeeId);
-        String name = employeeDetails.get().getName();
-
-        // 4. Check if already checked in and not checked out
-        LocalDateTime checkinTime = LocalDateTime.now();
-        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
-        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, today);
-
-        if (existingAttendance.isPresent()) {
-            List<CheckInOut> logs = existingAttendance.get().getLogs();
-            if (!logs.isEmpty()) {
-                CheckInOut lastLog = logs.get(logs.size() - 1);
-                if (lastLog.getType().equals("checkin")) {
-                    return Map.of(
-                        "status", "error",
-                        "message", "Please check out before checking in again"
-                    );
-                }
-            }
-        }
-
-        // 4. Rebuild MultipartFile for MinIO
-        MultipartFile newFile = buildMultipartFileFromBytes(file, fileBytes);
-
-        // 5. Upload check-in image
-        String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
-
-        // 6. Record daily attendance
-        recordDailyAttendance(employeeId, name, checkinImgUrl, checkinTime);
-
-        // 7. Return success response
-        return Map.of(
-            "status", "present",
-            "employee", name,
-            "emp_id", employeeId,
-            "message", "Attendance marked successfully"
-        );
-    }
-
-    public Map<String, Object> handleTeamcheckin(MultipartFile file, String empId) throws IOException {
-        // Check if manager is registered
-        if (!isEmployeeRegistered(empId)) {
-            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
-        }
-
-        byte[] fileBytes = file.getBytes();
-        Optional<Employee> employee = employeeService.getEmployeeByEmpId(empId);
-        List<String> empIdList = employee.get().getAssignTo();
-
-        // 1. Call face recognition API
-        Map<String, Object> recognitionResult = faceVerificationService.verifyByEmpIdList(file,empIdList);
-
-        // 2. Check if employee was found
+        // 3. Check if employee was found
         if (!"match".equalsIgnoreCase((String) recognitionResult.get("status"))) {
             return Map.of(
                     "status", "not found",
@@ -466,21 +428,25 @@ public class AttendanceService {
             );
         }
 
-        // 3. Get employee details
+        // 4. Get employee details
         String employeeId = (String) recognitionResult.get("empId");
-             Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(employeeId);
+        Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(employeeId);
         String name = employeeDetails.get().getName();
 
-        // 4. Check if already checked in and not checked out
-        LocalDateTime checkinTime = LocalDateTime.now();
-        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
-        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(employeeId, today);
+        // 5. Get current time as epoch
+        long checkinEpoch = EpochUtil.currentEpochSeconds();
+
+        // 6. Get start of day in UTC (for matching today's attendance)
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        long todayEpoch = EpochUtil.toEpochSeconds(LocalDateTime.now(zone).toLocalDate().atStartOfDay(), zone);
+
+        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDateEpoch(employeeId, todayEpoch);
 
         if (existingAttendance.isPresent()) {
             List<CheckInOut> logs = existingAttendance.get().getLogs();
             if (!logs.isEmpty()) {
                 CheckInOut lastLog = logs.get(logs.size() - 1);
-                if (lastLog.getType().equals("checkin")) {
+                if ("checkin".equalsIgnoreCase(lastLog.getType())) {
                     return Map.of(
                             "status", "error",
                             "message", "Please check out before checking in again"
@@ -489,16 +455,16 @@ public class AttendanceService {
             }
         }
 
-        // 4. Rebuild MultipartFile for MinIO
+        // 7. Rebuild MultipartFile for MinIO
         MultipartFile newFile = buildMultipartFileFromBytes(file, fileBytes);
 
-        // 5. Upload check-in image
+        // 8. Upload check-in image
         String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
 
-        // 6. Record daily attendance
-        recordDailyAttendance(employeeId, name, checkinImgUrl, checkinTime);
+        // 9. Record daily attendance using epoch
+        recordDailyAttendance(employeeId, name, checkinImgUrl, checkinEpoch, todayEpoch);
 
-        // 7. Return success response
+        // 10. Return success response
         return Map.of(
                 "status", "present",
                 "employee", name,
@@ -507,24 +473,47 @@ public class AttendanceService {
         );
     }
 
-    public Map<String, Object> manualAttendanceMarking(String empId, MultipartFile file){
-        // Check if employee is registered
+    public Map<String, Object> handleTeamcheckin(MultipartFile file, String empId) throws IOException {
+        // 1. Check if manager is registered
         if (!isEmployeeRegistered(empId)) {
             throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
         }
 
-        Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(empId);
-        String empName = employeeDetails.get().getName();
+        byte[] fileBytes = file.getBytes();
 
-        LocalDateTime checkinTime = LocalDateTime.now();
-        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
-        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDate(empId, today);
+        // 2. Get employee IDs under this manager
+        Optional<Employee> employee = employeeService.getEmployeeByEmpId(empId);
+        List<String> empIdList = employee.get().getAssignTo();
+
+        // 3. Call face recognition API
+        Map<String, Object> recognitionResult = faceVerificationService.verifyByEmpIdList(file, empIdList);
+
+        // 4. Check if employee was found
+        if (!"match".equalsIgnoreCase((String) recognitionResult.get("status"))) {
+            return Map.of(
+                    "status", "not found",
+                    "message", "Employee not recognized"
+            );
+        }
+
+        // 5. Get employee details
+        String employeeId = (String) recognitionResult.get("empId");
+        Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(employeeId);
+        String name = employeeDetails.get().getName();
+
+        // 6. Get current epoch time and today’s start (in IST)
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        long checkinEpoch = EpochUtil.currentEpochSeconds();
+        long todayEpoch = EpochUtil.toEpochSeconds(LocalDateTime.now(zone).toLocalDate().atStartOfDay(), zone);
+
+        // 7. Check if already checked in and not checked out
+        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDateEpoch(employeeId, todayEpoch);
 
         if (existingAttendance.isPresent()) {
             List<CheckInOut> logs = existingAttendance.get().getLogs();
             if (!logs.isEmpty()) {
                 CheckInOut lastLog = logs.get(logs.size() - 1);
-                if (lastLog.getType().equals("checkin")) {
+                if ("checkin".equalsIgnoreCase(lastLog.getType())) {
                     return Map.of(
                             "status", "error",
                             "message", "Please check out before checking in again"
@@ -533,10 +522,60 @@ public class AttendanceService {
             }
         }
 
+        // 8. Rebuild MultipartFile for MinIO
+        MultipartFile newFile = buildMultipartFileFromBytes(file, fileBytes);
+
+        // 9. Upload check-in image
+        String checkinImgUrl = minIOService.getCheckinImgUrl(employeeId, newFile);
+
+        // 10. Record daily attendance using epoch
+        recordDailyAttendance(employeeId, name, checkinImgUrl, checkinEpoch, todayEpoch);
+
+        // 11. Return success response
+        return Map.of(
+                "status", "present",
+                "employee", name,
+                "emp_id", employeeId,
+                "message", "Attendance marked successfully"
+        );
+    }
+
+
+    public Map<String, Object> manualAttendanceMarking(String empId, MultipartFile file) {
+        // 1. Check if employee is registered
+        if (!isEmployeeRegistered(empId)) {
+            throw new CustomException("User is not registered", HttpStatus.NOT_FOUND);
+        }
+
+        // 2. Get employee details
+        Optional<Employee> employeeDetails = employeeService.getEmployeeByEmpId(empId);
+        String empName = employeeDetails.get().getName();
+
+        // 3. Get current epoch timestamp and today's epoch (start of day in IST)
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        long checkinEpoch = EpochUtil.currentEpochSeconds();
+        long todayEpoch = EpochUtil.toEpochSeconds(LocalDateTime.now(zone).toLocalDate().atStartOfDay(), zone);
+
+        // 4. Check if already checked in and not checked out
+        Optional<DailyAttendance> existingAttendance = dailyRepo.findByEmployeeIdAndDateEpoch(empId, todayEpoch);
+        if (existingAttendance.isPresent()) {
+            List<CheckInOut> logs = existingAttendance.get().getLogs();
+            if (!logs.isEmpty()) {
+                CheckInOut lastLog = logs.get(logs.size() - 1);
+                if ("checkin".equalsIgnoreCase(lastLog.getType())) {
+                    return Map.of(
+                            "status", "error",
+                            "message", "Please check out before checking in again"
+                    );
+                }
+            }
+        }
+
+        // 5. Upload check-in image to MinIO
         String checkinImgUrl = minIOService.getCheckinImgUrl(empId, file);
 
-        // 6. Record daily attendance
-        recordDailyAttendance(empId,empName, "markedManually", checkinTime);
+        // 6. Record daily attendance using epoch
+        recordDailyAttendance(empId, empName, checkinImgUrl, checkinEpoch, todayEpoch);
 
         // 7. Return success response
         return Map.of(
@@ -546,6 +585,7 @@ public class AttendanceService {
                 "message", "Attendance marked successfully"
         );
     }
+
 
     // Helper Methods
     private MultipartFile buildMultipartFileFromBytes(MultipartFile original, byte[] bytes) {
@@ -561,20 +601,27 @@ public class AttendanceService {
         };
     }
 
-    private void recordDailyAttendance(String employeeId, String name, String checkinImgUrl, LocalDateTime checkinTime) {
-        LocalDateTime today = checkinTime.withHour(0).withMinute(0).withSecond(0).withNano(0);
-
+    private void recordDailyAttendance(String employeeId, String name, String checkinImgUrl, long checkinEpoch, long todayEpoch) {
         // ✅ Mark backdated absents on first-time check-in
         markPastDaysAbsentIfFirstCheckin(employeeId);
 
-        DailyAttendance daily = dailyRepo.findByEmployeeIdAndDate(employeeId, today)
-                .orElse(new DailyAttendance(null, employeeId, today, new ArrayList<>()));
+        DailyAttendance daily = dailyRepo.findByEmployeeIdAndDateEpoch(employeeId, todayEpoch)
+                .orElse(new DailyAttendance(null, employeeId, todayEpoch, new ArrayList<>()));
 
-        daily.getLogs().add(new CheckInOut("checkin", checkinTime, checkinImgUrl));
+        // Create a new CheckInOut log with epoch
+        CheckInOut checkInLog = new CheckInOut("checkin", checkinEpoch, checkinImgUrl);
+        daily.getLogs().add(checkInLog);
+
+        // Save the updated attendance
         dailyRepo.save(daily);
 
-        updateSummaryOnCheckIn(employeeId, today.toLocalDate());
+        // Convert todayEpoch to LocalDate (in IST) for summary update
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        LocalDate todayDate = EpochUtil.fromEpochSecondsToDate(todayEpoch, zone);
+
+        updateSummaryOnCheckIn(employeeId, todayDate);
     }
+
 
     public List<RegisteredUser> getRegisteredUsers() {
         return registeredUserRepository.findAll();
@@ -585,61 +632,65 @@ public class AttendanceService {
     }
 
     public Map<String, Object> getTeamCheckInStatus(String managerId) {
-        // Get manager's team members
+        // 1. Get manager's team members
         Optional<Employee> manager = employeeService.getEmployeeByEmpId(managerId);
         if (manager.isEmpty()) {
             throw new CustomException("Manager not found", HttpStatus.NOT_FOUND);
         }
+
         List<String> teamMembers = manager.get().getAssignTo();
-        
-        // Get today's date
-        LocalDateTime today = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0).withNano(0);
-        
-        // Batch fetch all team members' attendance for today in a single query
-        List<DailyAttendance> teamAttendance = dailyRepo.findByEmployeeIdInAndDate(teamMembers, today);
-        
-        // Create a map for quick lookup of attendance status
+
+        // 2. Get today's epoch start (Asia/Kolkata)
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        long todayEpoch = EpochUtil.toEpochSeconds(LocalDateTime.now(zone).toLocalDate().atStartOfDay(), zone);
+
+        // 3. Batch fetch attendance records for today
+        List<DailyAttendance> teamAttendance = dailyRepo.findByEmployeeIdInAndDateEpoch(teamMembers, todayEpoch);
+
+        // 4. Map attendance by employee ID
         Map<String, DailyAttendance> attendanceMap = teamAttendance.stream()
                 .collect(Collectors.toMap(DailyAttendance::getEmployeeId, attendance -> attendance));
-        
-        // Batch fetch all team members' details in a single query
+
+        // 5. Fetch employee details
         List<Employee> teamDetails = employeeService.getEmployeesByEmpIds(teamMembers);
         Map<String, Employee> employeeMap = teamDetails.stream()
                 .collect(Collectors.toMap(Employee::getEmployeeId, employee -> employee));
-        
-        // Create response map
+
+        // 6. Prepare response
         Map<String, Object> response = new HashMap<>();
         List<Map<String, Object>> teamStatus = new ArrayList<>();
-        
-        // Process all team members at once
+
         for (String empId : teamMembers) {
             Map<String, Object> memberStatus = new HashMap<>();
             memberStatus.put("empId", empId);
-            
-            // Get employee details from the map
+
+            // Get employee details
             Employee employee = employeeMap.get(empId);
             if (employee == null) continue;
             memberStatus.put("name", employee.getName());
-            
-            // Get attendance status from the map
+
+            // Get attendance logs
             DailyAttendance attendance = attendanceMap.get(empId);
-            if (attendance != null && !attendance.getLogs().isEmpty()) {
+            if (attendance != null && attendance.getLogs() != null && !attendance.getLogs().isEmpty()) {
                 CheckInOut lastLog = attendance.getLogs().get(attendance.getLogs().size() - 1);
-                memberStatus.put("status", lastLog.getType().equals("checkin") ? "checked_in" : "checked_out");
-                memberStatus.put("lastActionTime", lastLog.getTimestamp());
+                memberStatus.put("status", lastLog.getType().equalsIgnoreCase("checkin") ? "checked_in" : "checked_out");
+
+                // Convert timestampEpoch to readable LocalDateTime in IST
+                LocalDateTime lastActionTime = EpochUtil.fromEpochSeconds(lastLog.getTimestampEpoch(), zone);
+                memberStatus.put("lastActionTime", lastActionTime.toString());
             } else {
                 memberStatus.put("status", "not_checked_in");
             }
-            
+
             teamStatus.add(memberStatus);
         }
-        
+
         response.put("teamStatus", teamStatus);
         response.put("totalMembers", teamMembers.size());
         response.put("checkedInCount", teamStatus.stream()
                 .filter(status -> "checked_in".equals(status.get("status")))
                 .count());
-        
+
         return response;
     }
 

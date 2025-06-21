@@ -17,7 +17,8 @@ import java.time.LocalDateTime;
 public class CheckInOut {
     private String type; // "checkin" or "checkout"
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss", timezone = "Asia/Kolkata")
-    private LocalDateTime timestamp;
+//    private LocalDateTime timestamp;
+    private long timestampEpoch;
     private String checkinImgUrl; // Only used for checkin type
 
 }

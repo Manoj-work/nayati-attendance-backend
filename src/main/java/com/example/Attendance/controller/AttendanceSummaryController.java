@@ -68,7 +68,7 @@ public class AttendanceSummaryController {
             @PathVariable int month) {
         List<Employee> employees = employeeRepository.findByCompanyId(companyId);
         if (employees == null || employees.isEmpty()) {
-            return ResponseEntity.ok(Map.of("companyId", companyId, "attendance", Collections.emptyList()));
+            return ResponseEntity.ok(Map.of("companyId", companyId, "hrAttendance", Collections.emptyList()));
         }
         List<Map<String, Object>> attendanceList = employees.stream().map(emp -> {
             try {
@@ -81,6 +81,6 @@ public class AttendanceSummaryController {
                 return errorMap;
             }
         }).collect(Collectors.toList());
-        return ResponseEntity.ok(Map.of("companyId", companyId, "attendance", attendanceList));
+        return ResponseEntity.ok(Map.of("companyId", companyId, "hrAttendance", attendanceList));
     }
 } 

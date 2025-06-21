@@ -10,11 +10,14 @@ import java.util.Optional;
 
 @Repository
 public interface DailyAttendanceRepository extends MongoRepository<DailyAttendance, String> {
-    Optional<DailyAttendance> findByEmployeeIdAndDate(String employeeId, LocalDateTime date);
 
     boolean existsByEmployeeId(String employeeId);
 
-    List<DailyAttendance> findByEmployeeIdAndDateBetween(String employeeId, LocalDateTime startDate, LocalDateTime endDate);
 
-    List<DailyAttendance> findByEmployeeIdInAndDate(List<String> employeeIds, LocalDateTime date);
+
+    Optional<DailyAttendance> findByEmployeeIdAndDateEpoch(String employeeId, long todayEpoch);
+
+    List<DailyAttendance> findByEmployeeIdInAndDateEpoch(List<String> teamMembers, long todayEpoch);
+
+    List<DailyAttendance> findByEmployeeIdAndDateEpochBetween(String employeeId, long startEpoch, long endEpoch);
 }

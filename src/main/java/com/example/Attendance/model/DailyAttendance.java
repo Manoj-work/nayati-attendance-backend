@@ -24,7 +24,8 @@ public class DailyAttendance {
     @JsonIgnore
     private String id;
     private String employeeId;
-    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss", timezone = "Asia/Kolkata")
-    private LocalDateTime date;
+//    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss", timezone = "Asia/Kolkata")
+//    private LocalDateTime date;
+    private long dateEpoch;
     private List<CheckInOut> logs;
 }

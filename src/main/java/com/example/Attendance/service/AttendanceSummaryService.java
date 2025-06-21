@@ -7,17 +7,21 @@ import com.example.Attendance.model.LeaveModel;
 import com.example.Attendance.repository.DailyAttendanceRepository;
 import com.example.Attendance.repository.EmployeeRepository;
 import com.example.Attendance.repository.LeaveRepository;
+import com.example.Attendance.util.EpochUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 public class AttendanceSummaryService {
+
+    private static final ZoneId ZONE_ID = ZoneId.of("Asia/Kolkata");
+
     @Autowired
     private DailyAttendanceRepository dailyAttendanceRepository;
     @Autowired
@@ -26,37 +30,34 @@ public class AttendanceSummaryService {
     private LeaveRepository leaveRepository;
 
     public MonthlyAttendanceSummaryDTO getMonthlySummary(String employeeId, int year, int month) {
-        // 0. Check if employee exists before any calculation
+        // 0. Check if employee exists
         Optional<Employee> empOpt = employeeRepository.findByEmployeeId(employeeId);
         if (empOpt.isEmpty()) {
             throw new com.example.Attendance.exception.CustomException("Employee not found", HttpStatus.NOT_FOUND);
         }
-        Employee employee = empOpt.get();
 
-        // Start date is always the first of the month
-        java.time.YearMonth ym = java.time.YearMonth.of(year, month);
-        java.time.LocalDate start = ym.atDay(1);
-        // End date is the lesser of today or the last day of the month
-        java.time.LocalDate today = java.time.LocalDate.now();
-        java.time.LocalDate end = ym.atEndOfMonth();
+        Employee employee = empOpt.get();
+        LocalDate start = LocalDate.of(year, month, 1);
+        LocalDate today = LocalDate.now();
+        LocalDate end = LocalDate.of(year, month, start.lengthOfMonth());
         if (today.isBefore(end)) {
             end = today;
         }
 
-        // 1. Get present dates from daily attendance
+        // 1. Get present dates
         List<LocalDate> presentDates = getPresentDates(employeeId, start, end);
 
         // 2. Get leave and comp-off dates
-        LeaveDatesSummary leaveSummary = getLeaveDates(employeeId, start, ym.atEndOfMonth(), year, month);
+        LeaveDatesSummary leaveSummary = getLeaveDates(employeeId, start, end, year, month);
 
-        // 3. Get weekly off dates from employee profile
+        // 3. Weekly offs
         List<String> weeklyOffs = employee.getWeeklyOffs();
         List<LocalDate> weeklyOffDates = calculateWeeklyOffDates(weeklyOffs, start, end);
 
-        // 4. Calculate all dates in month up to today or end of month
+        // 4. All days in range
         List<LocalDate> allDates = getAllDatesInRange(start, end);
 
-        // 5. Calculate absent dates
+        // 5. Absent dates = all - present - leave - weekly offs
         Set<LocalDate> excluded = new HashSet<>();
         excluded.addAll(presentDates);
         excluded.addAll(leaveSummary.fullLeaveDates);
@@ -66,10 +67,10 @@ public class AttendanceSummaryService {
         excluded.addAll(weeklyOffDates);
 
         List<LocalDate> absentDates = allDates.stream()
-                .filter(date -> !excluded.contains(date))
+                .filter(d -> !excluded.contains(d))
                 .collect(Collectors.toList());
 
-        // 6. Build summary object
+        // 6. Build and return DTO
         MonthlyAttendanceSummaryDTO dto = new MonthlyAttendanceSummaryDTO();
         dto.setPresentDates(presentDates);
         dto.setFullLeaveDates(leaveSummary.fullLeaveDates);
@@ -78,26 +79,25 @@ public class AttendanceSummaryService {
         dto.setHalfCompoffDates(leaveSummary.halfCompoffDates);
         dto.setWeeklyOffDates(weeklyOffDates);
         dto.setAbsentDates(absentDates);
+
         return dto;
     }
 
-    // Helper DTO for leave summary
-    private static class LeaveDatesSummary {
-        List<LocalDate> fullLeaveDates = new ArrayList<>();
-        List<LocalDate> halfDayLeaveDates = new ArrayList<>();
-        List<LocalDate> fullCompoffDates = new ArrayList<>();
-        List<LocalDate> halfCompoffDates = new ArrayList<>();
-    }
+    private List<LocalDate> getPresentDates(String employeeId, LocalDate start, LocalDate end) {
+        long startEpoch = EpochUtil.toEpochSeconds(start, ZONE_ID);
+        long endEpoch = EpochUtil.toEpochSeconds(end.plusDays(1), ZONE_ID) - 1;
 
-    private List<LocalDate> getPresentDates(String employeeId, java.time.LocalDate start, java.time.LocalDate end) {
-        List<DailyAttendance> records = dailyAttendanceRepository.findByEmployeeIdAndDateBetween(employeeId, start.atStartOfDay(), end.atTime(23,59,59));
+        List<DailyAttendance> records = dailyAttendanceRepository
+                .findByEmployeeIdAndDateEpochBetween(employeeId, startEpoch, endEpoch);
+
         return records.stream()
                 .filter(d -> d.getLogs() != null && !d.getLogs().isEmpty())
-                .map(d -> d.getDate().toLocalDate())
+                .map(d -> EpochUtil.fromEpochSecondsToDate(d.getDateEpoch(), ZONE_ID))
+                .filter(Objects::nonNull)
                 .collect(Collectors.toList());
     }
 
-    private LeaveDatesSummary getLeaveDates(String employeeId, java.time.LocalDate start, java.time.LocalDate end, int year, int month) {
+    private LeaveDatesSummary getLeaveDates(String employeeId, LocalDate start, LocalDate end, int year, int month) {
         List<LeaveModel> leaves = leaveRepository.findByEmployeeIdAndStatusAndLeaveDatesBetween(employeeId, "Approved", start, end);
         LeaveDatesSummary summary = new LeaveDatesSummary();
         for (LeaveModel leave : leaves) {
@@ -129,7 +129,6 @@ public class AttendanceSummaryService {
         return result;
     }
 
-
     private List<LocalDate> getAllDatesInRange(LocalDate start, LocalDate end) {
         List<LocalDate> dates = new ArrayList<>();
         LocalDate date = start;
@@ -140,4 +139,10 @@ public class AttendanceSummaryService {
         return dates;
     }
 
-} 
+    private static class LeaveDatesSummary {
+        List<LocalDate> fullLeaveDates = new ArrayList<>();
+        List<LocalDate> halfDayLeaveDates = new ArrayList<>();
+        List<LocalDate> fullCompoffDates = new ArrayList<>();
+        List<LocalDate> halfCompoffDates = new ArrayList<>();
+    }
+}
